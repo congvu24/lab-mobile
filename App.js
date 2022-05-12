@@ -6,8 +6,7 @@
  * @flow strict-local
  */
 
-import React, {useRef, useState} from 'react';
-import type {Node} from 'react';
+import React, {useRef, useState, useEffect} from 'react';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import {
   Button,
@@ -26,6 +25,26 @@ import {
   View,
 } from 'react-native';
 
+import {openDatabase, enablePromise} from 'react-native-sqlite-storage';
+
+const tableName = 'user';
+
+export const getDBConnection = async () => {
+  return openDatabase({name: 'user-data.db', location: 'default'});
+};
+
+export const createTable = async db => {
+  // create table if not exists
+  const query = `CREATE TABLE IF NOT EXISTS ${tableName} (
+        name TEXT NOT NULL,
+        age INTEGER NOT NULL
+    ) `;
+
+  await db.executeSql(query);
+};
+
+enablePromise(true);
+
 import {
   Colors,
   DebugInstructions,
@@ -40,40 +59,72 @@ const height = Dimensions.get('window').height;
 const App: () => Node = () => {
   const isDarkMode = useColorScheme() === 'dark';
   const [modalVisible, setModalVisible] = useState(false);
-  const [showStart, setShowStart] = useState(false);
-  const [showEnd, setShowEnd] = useState(false);
-  const [timeStart, setTimeStart] = useState('');
-  const [timeEnd, setTimeEnd] = useState('');
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
+  const [filter, setFilter] = useState('');
   const [data, setData] = useState([]);
-  const drawer = useRef(null);
-  const [drawerPosition, setDrawerPosition] = useState('left');
-  const [showTodo, setShowTodo] = useState(true);
-  const [doneList, setDoneList] = useState([]);
+  const [edit, setEdit] = useState('');
+  const [editIndex, setEditIndex] = useState('');
+  const [name, setName] = useState([]);
+  const [age, setAge] = useState([]);
 
-  const onChangeEnd = (event, value) => {
-    setShowEnd(false);
-    setTimeEnd(value);
-  };
+  const onSave = async () => {
+    try {
+      console.log('on save');
+      if (name && age) {
+        setData([...data, {age, name}]);
+        setModalVisible(false);
+        setName('');
+        setAge('');
+        const db = await getDBConnection();
+        const insertQuery = `INSERT INTO ${tableName} (name, age) values ('${name}', ${age})`;
 
-  const onChangeStart = (event, value) => {
-    setShowStart(false);
-    setTimeStart(value);
-  };
-
-  const onSave = () => {
-    if (title && timeEnd && timeStart) {
-      setData([
-        ...data,
-        {title, description, timeEnd, timeStart, isDone: false},
-      ]);
-      setModalVisible(false);
-      setTimeEnd('');
-      setTimeStart('');
-      setTitle('');
-      setDescription('');
+        await db.executeSql(insertQuery);
+      }
+    } catch (err) {
+      console.log(err);
     }
+  };
+
+  const onUpdate = async () => {
+    try {
+      if (name && age) {
+        let newData = data;
+        let oldName = data[editIndex].name;
+        data[editIndex] = {
+          name,
+          age,
+        };
+
+        setData(newData);
+
+        setEditIndex('');
+        setEdit('');
+        setModalVisible(false);
+
+        const db = await getDBConnection();
+        const insertQuery = `UPDATE ${tableName} set name = '${name}', age = ${age} where name = '${oldName}'`;
+
+        await db.executeSql(insertQuery);
+      }
+    } catch (err) {
+      console.log(err);
+    }
+  };
+
+  const deleteItem = async index => {
+    setData([...data.slice(0, index), ...data.slice(index + 1, data.length)]);
+
+    const db = await getDBConnection();
+    const deleteQuery = `DELETE from ${tableName} where name = ${data[index].name}`;
+    await db.executeSql(deleteQuery);
+  };
+
+  const openEdit = index => {
+    setEdit(data[index]);
+    console.log('set', index)
+    setEditIndex(index);
+    setModalVisible(true);
+    setName(data[index].name);
+    setAge(data[index].age);
   };
 
   const backgroundStyle = {
@@ -82,169 +133,114 @@ const App: () => Node = () => {
     position: 'relative',
   };
 
-  const navigationView = () => (
-    <View style={[styles.container, styles.navigationContainer]}>
-      <Button
-        title="Todo"
-        style={{marginTop: 10}}
-        onPress={() => {
-          setShowTodo(true);
-          drawer.current.closeDrawer();
-        }}
-      />
-      <Button
-        title="Done"
-        style={{marginTop: 10}}
-        onPress={() => {
-          setShowTodo(false);
-          drawer.current.closeDrawer();
-        }}
-      />
-    </View>
-  );
-
+  useEffect(() => {
+    (async () => {
+      const db = await getDBConnection();
+      await createTable(db);
+      const todoItems = [];
+      const results = await db.executeSql(`SELECT name, age FROM ${tableName}`);
+      results.forEach(result => {
+        for (let index = 0; index < result.rows.length; index++) {
+          todoItems.push(result.rows.item(index));
+        }
+      });
+      setData(todoItems);
+    })();
+  }, []);
+  console.log(editIndex)
+  console.log(String(editIndex) != '')
   return (
     <SafeAreaView style={backgroundStyle}>
-      <DrawerLayoutAndroid
-        ref={drawer}
-        drawerWidth={300}
-        drawerPosition={drawerPosition}
-        renderNavigationView={navigationView}>
-        <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
-        <ScrollView
-          contentInsetAdjustmentBehavior="automatic"
-          style={backgroundStyle}>
-          <TouchableOpacity
-            style={styles.header}
-            onPress={() => drawer.current.openDrawer()}>
-            <Icon name="menufold" size={20} />
-            <Text style={styles.headerText}>To Do List</Text>
-          </TouchableOpacity>
-
-          <View style={styles.list}>
-            {data.length > 0 &&
-              showTodo &&
-              data
-                .filter(item => !doneList.includes(item))
-                .map(item => (
-                  <View style={styles.item} key={item.title + item.description}>
-                    <View style={styles.itemText}>
-                      <Text style={styles.itemTitle}>{item.title}</Text>
-                      <Text style={styles.itemTime}>
-                        {new Date(item.timeStart)
-                          .toLocaleTimeString()
-                          .slice(0, 5)}{' '}
-                        to{' '}
-                        {new Date(item.timeEnd)
-                          .toLocaleTimeString()
-                          .slice(0, 5)}
-                      </Text>
-                    </View>
+      <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
+      <ScrollView
+        contentInsetAdjustmentBehavior="automatic"
+        style={backgroundStyle}>
+        <TextInput
+          placeholder="Search user"
+          style={styles.input}
+          onChangeText={value => setFilter(value)}
+        />
+        <View style={styles.list}>
+          {data.length > 0 &&
+            data
+              .filter(item => item.name.includes(filter))
+              .map((item, index) => (
+                <View style={styles.item} key={index}>
+                  <View style={styles.itemText}>
+                    <Text style={styles.itemTitle}>{item.name}</Text>
+                    <Text style={styles.itemTime}>{item.age}</Text>
+                  </View>
+                  <View style={{flexDirection: 'row'}}>
                     <TouchableOpacity
                       style={styles.itemIcon}
                       onPress={() => {
-                        setDoneList([...doneList, item]);
+                        openEdit(index);
                       }}>
-                      <Icon name="checkcircleo" size={16} />
+                      <Icon name="edit" size={16} />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.itemIcon}
+                      onPress={() => {
+                        deleteItem(index);
+                      }}>
+                      <Icon name="delete" size={16} />
                     </TouchableOpacity>
                   </View>
-                ))}
-            {doneList.length > 0 &&
-              !showTodo &&
-              doneList.map(item => (
-                <View style={styles.item} key={item.title + item.description}>
-                  <View style={styles.itemText}>
-                    <Text style={styles.itemTitle}>{item.title}</Text>
-                    <Text style={styles.itemTime}>
-                      {new Date(item.timeStart)
-                        .toLocaleTimeString()
-                        .slice(0, 5)}{' '}
-                      to{' '}
-                      {new Date(item.timeEnd).toLocaleTimeString().slice(0, 5)}
-                    </Text>
-                  </View>
-                  <TouchableOpacity style={styles.itemIcon}>
-                    <Icon name="checkcircle" size={16} />
-                  </TouchableOpacity>
                 </View>
               ))}
-            {data.length == 0 && (
-              <Text style={{textAlign: 'center'}}>There is no note.</Text>
-            )}
-          </View>
-        </ScrollView>
-        <TouchableOpacity
-          style={styles.addBtn}
-          onPress={() => setModalVisible(true)}>
-          <Icon name="plus" size={20} color="white" />
-        </TouchableOpacity>
-        <Modal
-          animationType="slide"
-          transparent={true}
-          style={styles.modal}
-          visible={modalVisible}
-          onRequestClose={() => {
-            Alert.alert('Modal has been closed.');
-            setModalVisible(!modalVisible);
-          }}>
-          <SafeAreaView style={styles.modal}>
-            <View style={styles.centeredView}>
-              <Text style={styles.modalTitle}>Add Task</Text>
-              <TextInput
-                placeholder="Title"
-                style={styles.input}
-                onChangeText={value => setTitle(value)}
-              />
-              <TextInput
-                placeholder="Description"
-                style={styles.inputDescription}
-                numberOfLines={5}
-                onChangeText={value => setDescription(value)}
-              />
-              <View style={styles.timeWrap}>
+
+          {data.length == 0 && (
+            <Text style={{textAlign: 'center'}}>There is no user.</Text>
+          )}
+        </View>
+      </ScrollView>
+      <TouchableOpacity
+        style={styles.addBtn}
+        onPress={() => setModalVisible(true)}>
+        <Icon name="plus" size={20} color="white" />
+      </TouchableOpacity>
+      <Modal
+        animationType="slide"
+        transparent={true}
+        style={styles.modal}
+        visible={modalVisible}
+        onRequestClose={() => {
+          Alert.alert('Modal has been closed.');
+          setModalVisible(!modalVisible);
+        }}>
+        <SafeAreaView style={styles.modal}>
+          <View style={styles.centeredView}>
+            <Text style={styles.modalTitle}>Add User</Text>
+            <TextInput
+              placeholder="Name"
+              defaultValue={String(edit?.name)}
+              style={styles.input}
+              onChangeText={value => setName(value)}
+            />
+            <TextInput
+              placeholder="Age"
+              defaultValue={String(edit?.age)}
+              style={styles.input}
+              onChangeText={value => setAge(value)}
+            />
+            <View style={styles.footer}>
+              <TouchableOpacity
+                style={styles.footerBtn}
+                onPress={() => setModalVisible(false)}>
+                <Text>Close</Text>
+              </TouchableOpacity>
+              {String(editIndex) != '' && (
                 <TouchableOpacity
-                  style={styles.timeBtn}
-                  onPress={() => setShowStart(true)}>
-                  <Text>
-                    {timeStart
-                      ? timeStart.toLocaleTimeString().slice(0, 5)
-                      : 'Start time'}
-                  </Text>
+                  style={{
+                    ...styles.footerBtn,
+                    backgroundColor: 'red',
+                    marginLeft: 10,
+                  }}
+                  onPress={onUpdate}>
+                  <Text>Update</Text>
                 </TouchableOpacity>
-                {showStart && (
-                  <DateTimePicker
-                    testID="dateTimePicker"
-                    value={timeStart || new Date()}
-                    mode="time"
-                    is24Hour={true}
-                    onChange={onChangeStart}
-                  />
-                )}
-                <TouchableOpacity
-                  style={styles.timeBtn}
-                  onPress={() => setShowEnd(true)}>
-                  <Text>
-                    {timeEnd
-                      ? timeEnd.toLocaleTimeString().slice(0, 5)
-                      : 'End time'}
-                  </Text>
-                </TouchableOpacity>
-                {showEnd && (
-                  <DateTimePicker
-                    testID="dateTimePicker"
-                    value={timeEnd || new Date()}
-                    mode="time"
-                    is24Hour={true}
-                    onChange={onChangeEnd}
-                  />
-                )}
-              </View>
-              <View style={styles.footer}>
-                <TouchableOpacity
-                  style={styles.footerBtn}
-                  onPress={() => setModalVisible(false)}>
-                  <Text>Close</Text>
-                </TouchableOpacity>
+              )}
+              {String(editIndex) == '' && (
                 <TouchableOpacity
                   style={{
                     ...styles.footerBtn,
@@ -254,11 +250,11 @@ const App: () => Node = () => {
                   onPress={onSave}>
                   <Text>Save</Text>
                 </TouchableOpacity>
-              </View>
+              )}
             </View>
-          </SafeAreaView>
-        </Modal>
-      </DrawerLayoutAndroid>
+          </View>
+        </SafeAreaView>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -301,11 +297,13 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     marginVertical: 10,
     borderRadius: 10,
+    margin: 10,
   },
   inputDescription: {
     borderWidth: 1,
     marginVertical: 10,
     borderRadius: 10,
+    margin: 10,
     // height: 100,
   },
   modal: {
